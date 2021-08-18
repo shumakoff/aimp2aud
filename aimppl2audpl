@@ -1,14 +1,14 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # vim: set fileencoding=utf8 :
 
 import codecs
-import urllib
+import urllib.parse
 import re
 import os.path
 import sys
 import argparse
 
-import audiotools
+import pyAudioAnalysis
 
 
 class ConvertationError(Exception):
@@ -43,11 +43,11 @@ def convert(line):
     output = []
     chunks = line.split('|')
     
-    output.append('artist=%s' % urllib.quote(chunks[2]))
-    output.append('title=%s' % urllib.quote(chunks[5]))
-    output.append('album=%s' % urllib.quote(chunks[3]))
+    output.append('artist=%s' % urllib.parse.quote(chunks[2]))
+    output.append('title=%s' % urllib.parse.quote(chunks[5]))
+    output.append('album=%s' % urllib.parse.quote(chunks[3]))
     output.append('comment=')
-    output.append('genre=%s' % urllib.quote(chunks[4]))
+    output.append('genre=%s' % urllib.parse.quote(chunks[4]))
     try:
         if chunks[8][0] == '0': chunks[8] = chunks[8][1:] # strip leading zeroes in track number
     except IndexError:
@@ -88,12 +88,12 @@ def convert(line):
         segment_start = pcm_length_start / int(media_obj.sample_rate())
 
 
-        output.insert(0, 'uri=file://%s' % urllib.quote(cuemedia))
+        output.insert(0, 'uri=file://%s' % urllib.parse.quote(cuemedia))
         output.append('segment-start=%s000' % segment_start)
         if pcm_length_end: output.append('segment-end=%s000' % segment_end)
 
     else:
-        output.insert(0, 'uri=file://%s' % urllib.quote(chunks[1]))
+        output.insert(0, 'uri=file://%s' % urllib.parse.quote(chunks[1]))
 
     return output
 
@@ -115,7 +115,7 @@ if __name__ == '__main__':
     fd = codecs.open(playlist, 'r', 'utf-16')
     lines = fd.readlines()
 
-    print 'title=%s' % lines[0][6:-2] # set playlist name, strip <CR><LF>
+    print('title=%s' % lines[0][6:-2]) # set playlist name, strip <CR><LF>
 
     for counter, line in enumerate(lines[4:]): # strip first 4 lines with metadata
         '''
@@ -132,12 +132,12 @@ if __name__ == '__main__':
         if args.strip:
             line = line.replace(args.strip,'')
         if args.prefix:
-            line = line.replace('#Track:1|','#Track:1|'+args.prefix.decode('utf-8'))
+            line = line.replace('#Track:1|','#Track:1|'+args.prefix)
         if args.fix_slashes:
             line = line.replace('\\','/')
         try:
-            output = convert(line.encode('utf-8'))
+            output = convert(line)
         except ConvertationError as e:
             sys.stderr.write('%s at line %s in %s:\n\t\t%s' % (e, counter, playlist, line))
             continue
-        print '\n'.join(output)
+        print('\n'.join(output))
