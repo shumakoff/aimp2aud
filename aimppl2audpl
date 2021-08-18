@@ -1,0 +1,143 @@
+#!/usr/bin/env python
+# vim: set fileencoding=utf8 :
+
+import codecs
+import urllib
+import re
+import os.path
+import sys
+import argparse
+
+import audiotools
+
+
+class ConvertationError(Exception):
+    def __init__(self, value):
+        self.value = value
+    def __str__(self):
+        return repr(self.value)
+
+def pcm_lengths(tracks, total_pcm_frames, sample_rate):
+    """
+    Tracks must be cue.__tracks__ or list(cue.tracks())
+    from python-audiotools
+    """
+
+    index = 0
+    for (prev, track) in zip(tracks, tracks[1:]):
+        try:
+            track_offset = track.index(index).offset()
+        except KeyError:
+            track_offset = track.index(index+1).offset()
+        try:
+            prev_offset = prev.index(index).offset()
+        except KeyError:
+            prev_offset = prev.index(index+1).offset()
+        track_pcm_frames = (int(track_offset - prev_offset) * sample_rate)
+        total_pcm_frames -= track_pcm_frames
+        yield track_pcm_frames
+
+    yield total_pcm_frames
+
+def convert(line):
+    output = []
+    chunks = line.split('|')
+    
+    output.append('artist=%s' % urllib.quote(chunks[2]))
+    output.append('title=%s' % urllib.quote(chunks[5]))
+    output.append('album=%s' % urllib.quote(chunks[3]))
+    output.append('comment=')
+    output.append('genre=%s' % urllib.quote(chunks[4]))
+    try:
+        if chunks[8][0] == '0': chunks[8] = chunks[8][1:] # strip leading zeroes in track number
+    except IndexError:
+        chunks[8] = 1 # except we really don't know track number from playlist
+    output.append('track-number=%s' % chunks[8])
+    output.append('length=%s' % chunks[6])
+    output.append('quality=lossless')
+    output.append('codec=TODO')
+    output.append('bitrate=%s' % chunks[11])
+
+    if chunks[1].find(':') > -1: # check if it's cue
+        cuefile, cueindex = chunks[1].split(':') # get index, save rest
+
+        # start looking for media file in CUE
+        cfd = open(cuefile)
+        for cueline in cfd.readlines():
+            if 'FILE' in cueline:
+                cuemedia = re.search('"(?P<filename>.*)"', cueline).group('filename')
+                cuemedia = os.path.join(os.path.dirname(cuefile), cuemedia)
+                break
+        
+        try:
+            media_obj = audiotools.open(cuemedia)
+        except IOError:
+            raise ConvertationError('%s not found, keeping on' % cuemedia)
+        except audiotools.UnsupportedFile:
+            ext = cuemedia.split('.')
+            raise ConvertationError('%s not supported, keeping on' % ext[-1:]) 
+        cuesheet_obj = audiotools.read_sheet(cuefile)
+        pcm_lengths = list(cuesheet_obj.pcm_lengths(media_obj.total_frames(),media_obj.sample_rate()))
+        pcm_length_start = sum(pcm_lengths[0:int(cueindex)])
+        try: # we need to divide pcm_length by sample_rate to get length in seconds
+            pcm_lengths[int(cueindex)+1]
+            pcm_length_end = sum(pcm_lengths[0:int(cueindex)+1])
+            segment_end = pcm_length_end / int(media_obj.sample_rate())
+        except IndexError:
+            pcm_length_end = False
+        segment_start = pcm_length_start / int(media_obj.sample_rate())
+
+
+        output.insert(0, 'uri=file://%s' % urllib.quote(cuemedia))
+        output.append('segment-start=%s000' % segment_start)
+        if pcm_length_end: output.append('segment-end=%s000' % segment_end)
+
+    else:
+        output.insert(0, 'uri=file://%s' % urllib.quote(chunks[1]))
+
+    return output
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('playlist', help='AIMP2/3 Playlist')
+    parser.add_argument('-s', '--strip', help='Strip part of filepath, usefull with --prefix')
+    parser.add_argument('--prefix', help='Add prefix to filepaths')
+    parser.add_argument('--fix-slashes', help='Replace backslashes to forwardslashes', action='store_true')
+    args = parser.parse_args()
+
+    playlist = args.playlist
+
+
+    # aimp playlists by default come in
+    # UTF-16LE, which is odd
+    # assumes that most tags in files not empty
+    fd = codecs.open(playlist, 'r', 'utf-16')
+    lines = fd.readlines()
+
+    print 'title=%s' % lines[0][6:-2] # set playlist name, strip <CR><LF>
+
+    for counter, line in enumerate(lines[4:]): # strip first 4 lines with metadata
+        '''
+        line is:
+        #Track:1|<file_path>:<cue_index>|<artist>|<album>|<genre>|<title>|length|num|<track_num>|<year>|<sample_rate>|
+            0           1                   2       3       4       5       6     7       8       9       10
+        <bitrate>|<number_of_channels>
+            11          12
+        '''
+        if '#Group:' in line: # skip lines with aimp specific metadata
+            continue
+        
+        # parsing options
+        if args.strip:
+            line = line.replace(args.strip,'')
+        if args.prefix:
+            line = line.replace('#Track:1|','#Track:1|'+args.prefix.decode('utf-8'))
+        if args.fix_slashes:
+            line = line.replace('\\','/')
+        try:
+            output = convert(line.encode('utf-8'))
+        except ConvertationError as e:
+            sys.stderr.write('%s at line %s in %s:\n\t\t%s' % (e, counter, playlist, line))
+            continue
+        print '\n'.join(output)
