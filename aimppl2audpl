@@ -8,7 +8,7 @@ import os.path
 import sys
 import argparse
 
-import pyAudioAnalysis
+import audiotools
 
 
 class ConvertationError(Exception):
@@ -75,7 +75,7 @@ def convert(line):
             raise ConvertationError('%s not found, keeping on' % cuemedia)
         except audiotools.UnsupportedFile:
             ext = cuemedia.split('.')
-            raise ConvertationError('%s not supported, keeping on' % ext[-1:]) 
+            raise ConvertationError('%s not supported, keeping on' % ext[-1:])
         cuesheet_obj = audiotools.read_sheet(cuefile)
         pcm_lengths = list(cuesheet_obj.pcm_lengths(media_obj.total_frames(),media_obj.sample_rate()))
         pcm_length_start = sum(pcm_lengths[0:int(cueindex)])
